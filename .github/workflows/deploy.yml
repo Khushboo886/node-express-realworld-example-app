@@ -1,0 +1,67 @@
+name: Deploy Node App
+
+on:
+ push:
+   branches:
+     - master
+
+jobs:
+ deploy:
+   runs-on: ubuntu-latest
+
+   steps:
+
+   - name: Checkout Repo
+     uses: actions/checkout@v4
+
+   - name: Deploy to Azure VM
+     uses: appleboy/ssh-action@v1.0.3
+     with:
+       host: ${{ secrets.VM_HOST }}
+       username: ${{ secrets.VM_USER }}
+       key: ${{ secrets.VM_SSH_KEY }}
+       script: |
+
+         APP_DIR="/var/www/nodeapp"
+         CURRENT="$APP_DIR/current"
+         BACKUP="$APP_DIR/backup"
+         RELEASE="$APP_DIR/releases/release_$(date +%s)"
+
+         echo "Creating release folder"
+         mkdir -p $RELEASE
+
+         echo "Backing up current version"
+         rm -rf $BACKUP
+         cp -r $CURRENT $BACKUP
+
+         echo "Pulling new code"
+         git clone https://github.com/Khushboo886/node-express-realworld-example-app.git $RELEASE
+
+         cd $RELEASE
+         npm install
+
+         echo "Stopping app"
+         pm2 stop node-express-realworld-example-app || true
+
+         echo "Deploying new version"
+         rm -rf $CURRENT
+         mv $RELEASE $CURRENT
+
+         cd $CURRENT
+
+         pm2 start npm --name node-express-realworld-example-app -- start
+
+         echo "Running health check"
+         sleep 10
+
+         if curl -f http://localhost:3333
+         then
+           echo "Deployment successful"
+           rm -rf $BACKUP
+         else
+           echo "Deployment failed - restoring backup"
+           rm -rf $CURRENT
+           mv $BACKUP $CURRENT
+           pm2 restart node-express-realworld-example-app
+           exit 1
+         fi
