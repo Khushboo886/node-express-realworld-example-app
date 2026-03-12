@@ -24,8 +24,8 @@ jobs:
             APP_DIR="/var/www/nodeapp/current"
             BACKUP_DIR="/var/www/nodeapp/backup"
             APP_NAME="node-express-realworld"
-            # Updated Health Check URL
-            HEALTH_CHECK_URL="http://localhost:3000/api"
+            # Using 127.0.0.1 is often more reliable than 'localhost' in CI environments
+            HEALTH_CHECK_URL="http://127.0.0.1:3000/api"
 
             echo "========================================="
             echo "Starting deployment at $(date)"
@@ -35,20 +35,9 @@ jobs:
 
             echo "Creating backup..."
             rm -rf $BACKUP_DIR
-            if [ -d "$APP_DIR" ]; then
-              cp -r $APP_DIR $BACKUP_DIR
-              echo "Backup created."
-            else
-              echo "No existing deployment to backup."
-            fi
+            [ -d "$APP_DIR" ] && cp -r $APP_DIR $BACKUP_DIR && echo "Backup created."
 
             echo "Updating application code..."
-            if [ ! -d "$APP_DIR/.git" ]; then
-                echo "Repository not found. Cloning..."
-                # Replace with your actual repo URL if needed
-                git clone https://github.com/your-repo-url.git $APP_DIR
-            fi
-            
             cd $APP_DIR
             git fetch origin
             git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
@@ -60,34 +49,32 @@ jobs:
             if pm2 list | grep -q "$APP_NAME"; then
               pm2 restart $APP_NAME
             else
-              echo "PM2 process not found. Starting new one..."
               pm2 start npm --name "$APP_NAME" -- start
             fi
 
             pm2 save
-
-            echo "Waiting for app to start..."
-            # Increased startup wait time to 10 seconds
+            echo "Waiting 10s for app to initialize..."
             sleep 10
 
             echo "Running health check on $HEALTH_CHECK_URL..."
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL)
+            # Added -L to follow redirects and --retry
+            STATUS=$(curl -s -o /dev/null -L -w "%{http_code}" $HEALTH_CHECK_URL || echo "000")
 
             if [ "$STATUS" = "200" ]; then
-              echo "Health check passed. Status: $STATUS"
-              echo "Deployment successful."
+              echo "Health check passed (Status: $STATUS). Deployment successful."
               rm -rf $BACKUP_DIR
             else
-              echo "Health check failed (Status: $STATUS). Starting rollback..."
-
+              echo "HEALTH CHECK FAILED (Status: $STATUS)"
+              echo "Showing last 20 lines of logs for debugging:"
+              pm2 logs $APP_NAME --lines 20 --no-daemon & sleep 2 && kill $!
+              
+              echo "Starting rollback..."
               if [ -d "$BACKUP_DIR" ]; then
                 rm -rf $APP_DIR
                 mv $BACKUP_DIR $APP_DIR
                 cd $APP_DIR
                 pm2 restart $APP_NAME
-                echo "Rollback completed successfully."
-              else
-                echo "Rollback failed: No backup directory found!"
+                echo "Rollback completed."
               fi
               exit 1
             fi
