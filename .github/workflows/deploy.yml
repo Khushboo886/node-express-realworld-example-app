@@ -1,69 +1,91 @@
 name: Deploy to Azure VM with Rollback
 
 on:
-push:
-branches: [main, master]
-workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 jobs:
-deploy:
-runs-on: ubuntu-latest
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Azure VM
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            #!/bin/bash
+            set -e
 
-steps:
-  - name: Deploy to Azure VM
-    uses: appleboy/ssh-action@v0.1.7
-    with:
-      host: ${{ secrets.VM_HOST }}
-      username: ${{ secrets.VM_USER }}
-      key: ${{ secrets.VM_SSH_KEY }}
-      script: |
-        #!/bin/bash
-        set -e
+            APP_DIR="/var/www/nodeapp/current"
+            BACKUP_DIR="/var/www/nodeapp/backup"
+            APP_NAME="node-express-realworld"
+            HEALTH_CHECK_URL="http://localhost:3000"
 
-        APP_DIR="/var/www/nodeapp/current"
-        BACKUP_DIR="/var/www/nodeapp/backup"
-        APP_NAME="node-express-realworld"
-        HEALTH_CHECK_URL="http://localhost:3000"
+            echo "========================================="
+            echo "Starting deployment at $(date)"
+            echo "========================================="
 
-        echo "Starting deployment..."
+            # Ensure the directory exists for the first run
+            mkdir -p $(dirname $APP_DIR)
 
-        # Backup current version
-        rm -rf $BACKUP_DIR
-        if [ -d "$APP_DIR" ]; then
-          cp -r $APP_DIR $BACKUP_DIR
-          echo "Backup created"
-        fi
+            echo "Creating backup..."
+            rm -rf $BACKUP_DIR
+            if [ -d "$APP_DIR" ]; then
+              cp -r $APP_DIR $BACKUP_DIR
+              echo "Backup created."
+            else
+              echo "No existing deployment to backup."
+            fi
 
-        # Pull latest code
-        cd $APP_DIR
-        git pull origin main || git pull origin master
+            echo "Updating application code..."
+            if [ ! -d "$APP_DIR/.git" ]; then
+                echo "Repository not found. Cloning..."
+                git clone https://github.com/your-repo-url.git $APP_DIR
+            fi
+            
+            cd $APP_DIR
+            git fetch origin
+            git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
 
-        # Install dependencies
-        npm ci --production
+            echo "Installing dependencies..."
+            npm ci --production
 
-        # Restart application
-        if ! pm2 restart $APP_NAME; then
-          pm2 start npm --name "$APP_NAME" -- start
-        fi
+            echo "Restarting application..."
+            if pm2 list | grep -q "$APP_NAME"; then
+              pm2 restart $APP_NAME
+            else
+              echo "PM2 process not found. Starting new one..."
+              pm2 start npm --name "$APP_NAME" -- start
+            fi
 
-        pm2 save
+            pm2 save
 
-        sleep 5
+            echo "Waiting for app to start..."
+            sleep 5
 
-        # Health check
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL)
+            echo "Running health check..."
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL)
 
-        if [ "$STATUS" = "200" ]; then
-          echo "Deployment successful"
-          rm -rf $BACKUP_DIR
-        else
-          echo "Health check failed. Rolling back..."
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed. Status: $STATUS"
+              echo "Deployment successful."
+              rm -rf $BACKUP_DIR
+            else
+              echo "Health check failed (Status: $STATUS). Starting rollback..."
 
-          rm -rf $APP_DIR
-          mv $BACKUP_DIR $APP_DIR
-
-          cd $APP_DIR
-          pm2 restart $APP_NAME
-
-          exit 1
-        fi
+              if [ -d "$BACKUP_DIR" ]; then
+                rm -rf $APP_DIR
+                mv $BACKUP_DIR $APP_DIR
+                cd $APP_DIR
+                pm2 restart $APP_NAME
+                echo "Rollback completed successfully."
+              else
+                echo "Rollback failed: No backup directory found!"
+              fi
+              exit 1
+            fi
