@@ -6,7 +6,7 @@
 
 <a href="https://thinkster.io/tutorials/node-json-api" target="_blank"><img width="454" src="https://raw.githubusercontent.com/gothinkster/realworld/master/media/learn-btn-hr.png" /></a>
 
-## Getting Started 
+## Getting Started  
  
 ### Prerequisites
 
