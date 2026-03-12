@@ -9,7 +9,6 @@ jobs:
 deploy:
 runs-on: ubuntu-latest
 
-```
 steps:
   - name: Deploy to Azure VM
     uses: appleboy/ssh-action@v0.1.7
@@ -68,4 +67,3 @@ steps:
 
           exit 1
         fi
-```
