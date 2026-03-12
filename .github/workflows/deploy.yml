@@ -1,127 +1,141 @@
 name: Deploy to Azure VM with Rollback
+
 on:
- push:
-   branches: [ main, master ]
- workflow_dispatch:
+push:
+branches: [ main, master ]
+workflow_dispatch:
+
 jobs:
- deploy:
-   runs-on: ubuntu-latest
-  
-   steps:
-   - name: Deploy to Azure VM
-     uses: appleboy/ssh-action@v0.1.7
-     with:
-       host: ${{ secrets.VM_HOST }}
-       username: ${{ secrets.VM_USER }}
-       key: ${{ secrets.VM_SSH_KEY }}
-       script: |
-         #!/bin/bash
-         set -e
-        
-         # Variables
-         APP_DIR="/var/www/nodeapp/current"
-         BACKUP_DIR="/var/www/nodeapp/backup"
-         APP_NAME="node-express-realworld"
-         HEALTH_CHECK_URL="[localhost](http://localhost:3000)"
-         MAX_RETRIES=5
-         RETRY_DELAY=3
-        
-         echo "========================================="
-         echo "Starting deployment at $(date)"
-         echo "========================================="
-        
-         # Function to check app health
-         check_health() {
-           local retries=0
-           while [ $retries -lt $MAX_RETRIES ]; do
-             if curl -f -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL | grep -q "200\|204"; then
-               return 0
-             fi
-             retries=$((retries + 1))
-             echo "Health check attempt $retries/$MAX_RETRIES failed"
-             sleep $RETRY_DELAY
-           done
-           return 1
-         }
-        
-         # Function to restore backup
-         restore_backup() {
-           echo "⚠️  Deployment failed! Starting rollback..."
-          
-           if [ -d "$BACKUP_DIR" ]; then
-             echo "Restoring from backup..."
-             rm -rf "$APP_DIR"
-             mv "$BACKUP_DIR" "$APP_DIR"
-            
-             cd "$APP_DIR"
-             pm2 restart $APP_NAME
-            
-             if check_health; then
-               echo "✅ Rollback successful! Application restored."
-             else
-               echo "❌ Rollback failed! Manual intervention required."
-               exit 1
-             fi
-           else
-             echo "❌ No backup found! Manual intervention required."
-             exit 1
-           fi
-         }
-        
-         # Step 1: Create backup
-         echo "📦 Creating backup..."
-         rm -rf "$BACKUP_DIR"
-         if [ -d "$APP_DIR" ]; then
-           cp -r "$APP_DIR" "$BACKUP_DIR"
-           echo "✅ Backup created"
-         else
-           echo "⚠️  No existing deployment to backup"
-         fi
-        
-         # Step 2: Pull latest code
-         echo "🔄 Pulling latest code..."
-         cd "$APP_DIR"
-        
-         if ! git pull origin main 2>/dev/null && ! git pull origin master 2>/dev/null; then
-           echo "❌ Git pull failed!"
-           restore_backup
-           exit 1
-         fi
-         echo "✅ Code updated"
-        
-         # Step 3: Install dependencies
-         echo "📦 Installing dependencies..."
-         if ! npm ci --production; then
-           echo "❌ Dependency installation failed!"
-           restore_backup
-           exit 1
-         fi
-         echo "✅ Dependencies installed"
-        
-         # Step 4: Restart application
-         echo "🔄 Restarting application..."
-         if ! pm2 restart $APP_NAME; then
-           # If app doesn't exist, start it
-           pm2 start npm --name "$APP_NAME" -- start
-         fi
-         pm2 save
-        
-         # Step 5: Health check
-         echo "🏥 Running health check..."
-         sleep 5  # Give app time to start
-        
-         if check_health; then
-           echo "✅ Health check passed!"
-          
-           # Step 6: Cleanup backup on success
-           echo "🧹 Cleaning up backup..."
-           rm -rf "$BACKUP_DIR"
-           echo "✅ Backup removed"
-          
-           echo "========================================="
-           echo "✅ DEPLOYMENT SUCCESSFUL at $(date)"
-           echo "========================================="
-         else
-           echo "❌ Health check failed!"
-           restore_backup
-           exit 1
+deploy:
+runs-on: ubuntu-latest
+
+```
+steps:
+  - name: Deploy to Azure VM
+    uses: appleboy/ssh-action@v0.1.7
+    with:
+      host: ${{ secrets.VM_HOST }}
+      username: ${{ secrets.VM_USER }}
+      key: ${{ secrets.VM_SSH_KEY }}
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Variables
+        APP_DIR="/var/www/nodeapp/current"
+        BACKUP_DIR="/var/www/nodeapp/backup"
+        APP_NAME="node-express-realworld"
+        HEALTH_CHECK_URL="http://localhost:3000"
+        MAX_RETRIES=5
+        RETRY_DELAY=3
+
+        echo "========================================="
+        echo "Starting deployment at $(date)"
+        echo "========================================="
+
+        # Function to check app health
+        check_health() {
+          local retries=0
+          while [ $retries -lt $MAX_RETRIES ]; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL || true)
+
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "204" ]; then
+              return 0
+            fi
+
+            retries=$((retries + 1))
+            echo "Health check attempt $retries/$MAX_RETRIES failed"
+            sleep $RETRY_DELAY
+          done
+          return 1
+        }
+
+        # Function to restore backup
+        restore_backup() {
+          echo "⚠️ Deployment failed! Starting rollback..."
+
+          if [ -d "$BACKUP_DIR" ]; then
+            echo "Restoring from backup..."
+
+            rm -rf "$APP_DIR"
+            mv "$BACKUP_DIR" "$APP_DIR"
+
+            cd "$APP_DIR"
+            pm2 restart $APP_NAME
+
+            if check_health; then
+              echo "✅ Rollback successful! Application restored."
+            else
+              echo "❌ Rollback failed! Manual intervention required."
+              exit 1
+            fi
+          else
+            echo "❌ No backup found! Manual intervention required."
+            exit 1
+          fi
+        }
+
+        # Step 1: Create backup
+        echo "📦 Creating backup..."
+        rm -rf "$BACKUP_DIR"
+
+        if [ -d "$APP_DIR" ]; then
+          cp -r "$APP_DIR" "$BACKUP_DIR"
+          echo "✅ Backup created"
+        else
+          echo "⚠️ No existing deployment to backup"
+        fi
+
+        # Step 2: Pull latest code
+        echo "🔄 Pulling latest code..."
+        cd "$APP_DIR"
+
+        if ! git pull origin main 2>/dev/null && ! git pull origin master 2>/dev/null; then
+          echo "❌ Git pull failed!"
+          restore_backup
+          exit 1
+        fi
+
+        echo "✅ Code updated"
+
+        # Step 3: Install dependencies
+        echo "📦 Installing dependencies..."
+        if ! npm ci --production; then
+          echo "❌ Dependency installation failed!"
+          restore_backup
+          exit 1
+        fi
+
+        echo "✅ Dependencies installed"
+
+        # Step 4: Restart application
+        echo "🔄 Restarting application..."
+
+        if ! pm2 restart $APP_NAME; then
+          echo "PM2 process not found. Starting new process..."
+          pm2 start npm --name "$APP_NAME" -- start
+        fi
+
+        pm2 save
+
+        # Step 5: Health check
+        echo "🏥 Running health check..."
+        sleep 5
+
+        if check_health; then
+          echo "✅ Health check passed!"
+
+          # Step 6: Cleanup backup
+          echo "🧹 Cleaning up backup..."
+          rm -rf "$BACKUP_DIR"
+
+          echo "========================================="
+          echo "✅ DEPLOYMENT SUCCESSFUL at $(date)"
+          echo "========================================="
+
+        else
+          echo "❌ Health check failed!"
+          restore_backup
+          exit 1
+        fi
+```
